@@ -231,7 +231,8 @@ function noticeCard(item, detail, ctx) {
 function turnFooter(item, ctx) {
   const t = ctx.t, c = colors(t);
   const k = item.tokens;
-  const total = k ? k.input + k.output + (k.cacheRead ?? 0) + (k.cacheWrite ?? 0) : 0;
+  // why: cache reads resend the whole context every call, so counting them showed six figures for a one-word reply.
+  const total = k ? k.input + k.output + (k.cacheWrite ?? 0) : 0;
   const parts = [dur(item.seconds), total ? `${count(total)} tokens` : "", money(item.cost)].filter(Boolean);
   const row = h_flex().id(`sys-${item.id}`).pb(16).gap(6).items_center().text_size(t.size.small).text_color(c.muted);
   if (!parts.length) return row;

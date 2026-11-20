@@ -499,6 +499,18 @@ export default class ClaudeChat extends View {
           .tooltip("Alt+T"))));
   }
 
+  /** A new chat: what it is and where it runs, until the first message. */
+  empty(ctx) {
+    const t = ctx.t;
+    const cwd = (this.chat.cwd || this.p.cwd || "").replace(/^\/home\/[^/]+(?=\/|$)/, "~").replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
+    return v_flex().flex_1().min_h(0).items_center().justify_center().gap(6).px(24)
+      .child(h_flex().gap(10).items_center()
+        .child(image("mods/claude-chat/icons/claude.svg").size(26).flex_none())
+        .child(div().text_size(22).font_weight(600).text_color(t.c.foreground).child("Claude Code")))
+      .when(Boolean(cwd), (el) => el.child(div().text_size(t.size.ui).text_color(t.c.muted).child(cwd)))
+      .child(div().pt(10).text_size(t.size.small).text_color(t.c.dim).child("/ for commands · @ for files · Alt+T for the terminal"));
+  }
+
   /** Claude's spinner line from its screen: what it is doing, for how long, and how many tokens. */
   workingRow(t) {
     const w = this.working;
@@ -515,7 +527,9 @@ export default class ClaudeChat extends View {
     if (this.chat.terminalView) return terminalBar(this.chat, ctx);
     let body;
     try {
-      body = this.phase === "ready" ? this.transcript(ctx) : this.status(ctx);
+      // why: a new session's transcript already holds hook output and notices, none of which is a conversation yet.
+      const started = this.streamItem || this.items.some((it) => it.kind === "user" || it.kind === "reply" || it.kind === "tool");
+      body = this.phase !== "ready" ? this.status(ctx) : started ? this.transcript(ctx) : this.empty(ctx);
     } catch (e) {
       // why: the host keeps the last good frame silently on a throw; drawing the error says what broke.
       body = div().flex_1().p(24).text_size(t.size.small).text_color(t.c.muted).child(`Couldn't draw the chat: ${e?.stack ?? e}`);

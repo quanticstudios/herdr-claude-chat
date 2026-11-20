@@ -43,6 +43,8 @@ export async function findTranscript(term) {
 const RULE = /^─{8,}$/;
 const BULLET = /^[●⏺] /;
 const PROMPT = /^[❯>] /;
+// why: a tool call waiting for approval has no ⎿ result yet, only its "Write(hello.md)" header.
+const TOOL_HEAD = /^[A-Za-z_][\w:.-]*(?: \([A-Z]+\))?\(/;
 const FOLDED = /^[A-Z][a-z]+(?: for)? \d+ [a-z]+(?: [a-z]+)?(?:, [a-z]+(?: for)? \d+ [a-z]+(?: [a-z]+)?)*…?(?: \(.*\))?$/;
 
 /**
@@ -65,7 +67,7 @@ export function parseScreen(screen, cols = 0) {
   for (let i = top + 1; i < cut; i++) {
     const l = lines[i];
     if (BULLET.test(l)) {
-      cur = { lines: [l.slice(2)], tool: false };
+      cur = { lines: [l.slice(2)], tool: TOOL_HEAD.test(l.slice(2)) };
       blocks.push(cur);
     } else if (cur && /^\s+⎿/.test(l)) {
       // why: a running tool's bullet blinks off, so its header can read as the previous block's last line.

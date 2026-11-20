@@ -154,7 +154,8 @@ const LANG = { ts: "TypeScript", tsx: "TSX", js: "JavaScript", jsx: "JSX", py: "
 function codeBlock(b, s, id, w) {
   const { c, t } = s;
   const diff = b.lang === "diff" || b.lang === "patch" || (!b.lang && /^(?:--- |\+\+\+ |@@ )/m.test(b.text) && /^[+-]/m.test(b.text));
-  const colors = { kw: c.ansi5 ?? c.accent, str: c.ansi2 ?? c.done, num: c.ansi3 ?? c.blocked, com: c.muted };
+  const colors = { kw: c.ansi5 ?? c.accent, str: c.ansi2 ?? c.done, num: c.ansi3 ?? c.blocked, com: c.muted,
+    fn: c.ansi4 ?? c.accent, type: c.ansi6 ?? c.accent, op: c.muted };
   const lines = b.text.split("\n");
   const row = (line, k) => {
     const el = h_flex().id(`${id}:l${k}`).min_w_full().px(14).h(19).flex_none().whitespace_nowrap();
@@ -165,7 +166,8 @@ function codeBlock(b, s, id, w) {
       const col = add ? c.ansi2 ?? c.done : del ? c.ansi1 ?? c.blocked : meta ? c.muted : s.code;
       return el.when(add || del, (e) => e.bg(mix(c.background, col, 0.14))).text_color(col).child(line || " ");
     }
-    return el.children(tint(line, b.lang).map((r) => r.k ? div().text_color(colors[r.k]).child(r.v) : r.v)).when(!line, (e) => e.child(" "));
+    return el.children(tint(line, b.lang).map((r) => r.k ? div().text_color(colors[r.k]).when(r.k === "com", (d) => d.italic()).child(r.v) : r.v))
+      .when(!line, (e) => e.child(" "));
   };
   return v_flex().w_full().rounded(t.radius.block).border(1).border_color(c.border).bg(s.codeBg).overflow_hidden()
     .child(h_flex().h(30).pl(14).pr(1).items_center().justify_between().border_b(1).border_color(c.border)
@@ -181,12 +183,13 @@ function table(b, s, id, w) {
   const total = cols.reduce((a, x) => a + x, 0);
   const row = (cells, r, head) => h_flex().w(total).flex_none().items_start()
     .when(head || r < b.rows.length - 1, (el) => el.border_b(1).border_color(head ? c.input ?? c.border : c.border))
-    .when(head, (el) => el.text_color(c.foreground).font_weight(500))
+    .when(head, (el) => el.bg(s.codeBg).text_color(c.foreground).font_weight(500))
     .children(cells.map((x, k) => div().w(cols[k]).flex_none().px(12).py(head ? 6 : 8)
       .when(b.align[k] === "right", (el) => el.text_right()).when(b.align[k] === "center", (el) => el.text_center())
       .child(text(x, s, `${id}:${head ? "h" : r}:${k}`))));
   return div().id(id + ":scroll").w_full().when(total > w + 1, (el) => el.overflow_x_scroll()).child(
-    v_flex().w(total).child(row(b.head, -1, true)).children(b.rows.map((r, i) => row(r, i, false))));
+    v_flex().w(total).rounded(s.t.radius.block).border(1).border_color(c.border).overflow_hidden()
+      .child(row(b.head, -1, true)).children(b.rows.map((r, i) => row(r, i, false))));
 }
 
 function details(b, s, id, w) {

@@ -38,7 +38,7 @@ const commandsHelper = () => `${appHome()}/mods/claude-chat/bin/commands.py`;
 
 let bound = false;
 
-const PLACEHOLDER = { idle: "Reply to Claude", working: "Type to queue a follow-up", blocked: "Answer above, or type to queue" };
+const PLACEHOLDER = { idle: "Reply to Claude", working: "Enter steers Claude now · Alt+Enter sends after this turn", blocked: "Answer above, or type to queue" };
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 /** The blocked screen's prompt: the composer's reader first, then chat.js's, which also knows unnumbered prompts. */
@@ -70,6 +70,8 @@ export class Composer {
     this.history = this.load("history", []);
     this.recall = -1;
     this.queued = [];
+    // invariant: held messages stay in the chat, never in Claude's input, until a turn ends; so they can still be edited or dropped.
+    this.held = this.load("held", []);
     this.footer = this.load("footer", { model: null, effort: null, mode: null, context: null });
     this.footerAt = 0;
     this.want = null;
@@ -130,7 +132,8 @@ export class Composer {
 
   async read() {
     // why: 200 lines of history keep the last "Set effort level" acknowledgement in view after it scrolls off.
-    const r = await hc(["read", this.chat.terminal, "--lines", "200"]).catch(() => null);
+    // why: the tick waits on this read, and one hc read that never returned froze the approval card for good.
+    const r = await exec("hc", ["read", this.chat.terminal, "--lines", "200"], { timeout: 4000 }).catch(() => null);
     return r && r.code === 0 ? r.stdout : null;
   }
 
@@ -147,6 +150,7 @@ export class Composer {
         this.queued = this.queued.filter((q) => q.turn >= turn && status === "working");
       }
       this.turn = turn;
+      if (this.held.length && (status === "idle" || status === "done") && Date.now() - (this.sentAt ?? 0) > 3000) this.flushHeld(cx);
       const due = status === "blocked" || status !== this.lastStatus || Date.now() - this.footerAt > 4000;
       this.lastStatus = status;
       if (!due) return;
@@ -227,12 +231,12 @@ export class Composer {
     const caret = this.ta.selected_range().end;
     if (this.pop === "slash") {
       const q = c.slashWord(text, caret) ?? "";
-      return c.filterBy(this.commands, q, (x) => [x.name, ...(x.aliases ?? [])], 40)
+      return c.filterBy(this.commands, q, (x) => [x.name, ...(x.aliases ?? [])], 1000)
         .map((x) => ({ id: x.name, label: "/" + x.name + (x.aliases?.length ? ` (${x.aliases.join(", ")})` : ""), desc: x.desc, x }));
     }
     if (this.pop === "at") {
       const q = c.atWord(text, caret)?.query ?? "";
-      return c.filterBy(this.files ?? [], q, (x) => x, 40).map((p) => ({ id: p, label: p, desc: "", x: p }));
+      return c.filterBy(this.files ?? [], q, (x) => x, 200).map((p) => ({ id: p, label: p, desc: "", x: p }));
     }
     return [];
   }
@@ -314,7 +318,14 @@ export class Composer {
     const text = c.promptText(content, this.images);
     if (!text || this.sending) return;
     const status = this.status();
-    if (status === "blocked") { this.say(cx, "Answer Claude's question first; your message stays here"); return; }
+    if (status === "blocked") {
+      const no = this.denyOption();
+      if (!no) { this.say(cx, "Answer Claude's question first; your message stays here"); return; }
+      this.ta.set_value("");
+      this.save("draft", null);
+      this.answer(no.key, cx, text);
+      return;
+    }
     this.sending = true;
     const images = this.images;
     this.ta.set_value("");
@@ -330,9 +341,49 @@ export class Composer {
       this.say(cx, `Couldn't send: ${String(err).split("\n")[0]}`);
       return;
     }
+    this.sentAt = Date.now();
     this.history = [...this.history.filter((h) => h !== content.text), content.text].slice(-50);
     this.save("history", this.history);
     if (status === "working") this.queued.push({ text: content.text, turn: this.term()?.turn ?? 0, at: Date.now() });
+    cx.notify();
+  }
+
+  /** Keeps the box's message in the chat to send when the current turn ends. */
+  hold(cx) {
+    const content = this.ta.content();
+    if (!c.promptText(content, this.images)) return;
+    this.held.push({ content, images: this.images });
+    this.ta.set_value("");
+    this.images = [];
+    this.save("draft", null);
+    this.save("held", this.held);
+    cx.notify();
+  }
+
+  /** Sends the first held message. */
+  async flushHeld(cx) {
+    const h = this.held[0];
+    if (!h || this.sending) return;
+    this.sending = true;
+    this.sentAt = Date.now();
+    const err = await this.chat.send(c.promptText(h.content, h.images)).catch((e) => String(e));
+    this.sending = false;
+    if (err) { this.say(cx, `Couldn't send the held message: ${String(err).split("\n")[0]}`); return; }
+    this.held = this.held.filter((x) => x !== h);
+    this.save("held", this.held);
+    this.history = [...this.history.filter((x) => x !== h.content.text), h.content.text].slice(-50);
+    this.save("history", this.history);
+    cx.notify();
+  }
+
+  /** Edit puts a held message back in the box, up moves it one place earlier, drop removes it. */
+  heldAction(i, what, cx) {
+    const h = this.held[i];
+    if (!h) return;
+    if (what === "up" && i > 0) [this.held[i - 1], this.held[i]] = [h, this.held[i - 1]];
+    else this.held.splice(i, 1);
+    if (what === "edit") { this.ta.set_value(h.content); this.images = h.images ?? []; this.ta.focus(); }
+    this.save("held", this.held);
     cx.notify();
   }
 
@@ -397,6 +448,11 @@ export class Composer {
       cx.stop_propagation(); return;
     }
     if (k === "shift-enter") { this.ta.replace("\n"); cx.stop_propagation(); return; }
+    if (k === "alt-enter") {
+      if (this.status() === "idle" || this.status() === "done") cx.spawn(async (cx) => this.submit(cx));
+      else this.hold(cx);
+      cx.stop_propagation(); return;
+    }
     if (k === "alt-backspace") {
       const end = this.ta.selected_range().end;
       this.ta.set_selected_range({ start: c.wordStart(this.ta.value(), end), end });
@@ -458,8 +514,13 @@ export class Composer {
 
   // ---- approvals ----
 
-  /** Presses an approval key after re-reading the screen; a changed prompt refuses and shows the new one. */
-  answer(key, cx) {
+  /** The open approval's "No" option, which a typed reason answers. */
+  denyOption() {
+    return this.prompt?.kind === "approval" ? this.prompt.options.find((o) => /^no\b/i.test(o.label)) ?? null : null;
+  }
+
+  /** Presses an approval key after re-reading the screen; a changed prompt refuses and shows the new one. `then` is sent once Claude stops waiting. */
+  answer(key, cx, then) {
     const asked = c.promptKey(this.prompt);
     cx.spawn(async (cx) => {
       const screen = await this.read();
@@ -470,6 +531,15 @@ export class Composer {
       this.ta.focus();
       this.footerAt = 0;
       cx.notify();
+      if (!then) return;
+      // why: the TUI takes typed text only once its prompt is gone, so the reason waits for the screen to drop it.
+      for (let i = 0; i < 30; i++) {
+        const s = await this.read();
+        if (s != null && !promptOf(s)) break;
+        await new Promise((resolve) => cx.timer.after(100, () => resolve()));
+      }
+      const err = await this.chat.send(then).catch((e) => String(e));
+      if (err) { this.ta.set_value(then); this.say(cx, `Couldn't send the reason: ${String(err).split("\n")[0]}`); }
     });
   }
 
@@ -481,9 +551,10 @@ export class Composer {
     const showCard = status === "blocked" && this.prompt;
     return v_flex().flex_none().w_full().max_w(t.measure).mx_auto().px(24).pb(16).pt(12).gap(8).font_family(t.font.ui)
       .when(this.queued.length > 0, (el) => el.child(this.queuedRow(t)))
+      .when(this.held.length > 0, (el) => el.child(this.heldRow(t)))
       .when(Boolean(this.notice), (el) => el.child(div().text_size(t.size.small).text_color(t.c.muted).child(this.notice)))
       .when(showCard, (el) => el.child(this.card(t, ctx)))
-      .when(!showCard, (el) => el.child(this.box(t, status)));
+      .when(!showCard || Boolean(this.denyOption()), (el) => el.child(this.box(t, status)));
   }
 
   queuedRow(t) {
@@ -495,6 +566,19 @@ export class Composer {
           .text_size(t.size.small).font_weight(500).text_color(t.c.muted).hover((s) => s.bg(t.c.hover).text_color(t.c.foreground))
           .tooltip("Stop the current turn; Claude takes the queue next (Esc)")
           .on_click((_e, cx) => { q.sending = true; this.interrupt(cx); cx.notify(); }).child("Send now")))));
+  }
+
+  heldRow(t) {
+    const act = (id, label, tip, onClick) => div().id(id).flex_none().px(6).rounded(6).cursor_pointer()
+      .text_size(t.size.small).font_weight(500).text_color(t.c.muted).hover((s) => s.bg(t.c.hover).text_color(t.c.foreground))
+      .tooltip(tip).on_click((_e, cx) => onClick(cx)).child(label);
+    return v_flex().gap(4).children(this.held.map((h, i) =>
+      h_flex().id(`held-${i}`).gap(8).items_center().px(12).h(28).rounded(t.radius.chip).border(1).border_color(t.c.border)
+        .child(div().text_size(t.size.small).font_weight(500).text_color(t.c.muted).flex_none().child(i === 0 ? "Next" : `Then ${i + 1}`))
+        .child(div().flex_1().min_w(0).truncate().text_size(t.size.small).text_color(t.c.foreground).child(c.promptText(h.content, h.images ?? []).replace(/\s+/g, " ")))
+        .child(act(`held-edit-${i}`, "Edit", "Back into the box", (cx) => this.heldAction(i, "edit", cx)))
+        .when(i > 0, (el) => el.child(act(`held-up-${i}`, "↑", "Send earlier", (cx) => this.heldAction(i, "up", cx))))
+        .child(act(`held-drop-${i}`, "✕", "Drop it", (cx) => this.heldAction(i, "drop", cx)))));
   }
 
   box(t, status) {
@@ -518,7 +602,7 @@ export class Composer {
           .child(Textarea.new(this.ta).w_full().token((tk) => this.tokenChip(t, tk)))
           // why: TextareaState's placeholder is fixed at creation, and this one follows the chat's state.
           .when(!this.ta.value(), (el) => el.child(div().absolute().top(this.images.length ? 8 : 12).left(16).text_color(t.c.muted)
-            .child(PLACEHOLDER[status] ?? PLACEHOLDER.idle))))
+            .child(status === "blocked" && this.denyOption() ? "Or type why not, and Enter denies with it" : PLACEHOLDER[status] ?? PLACEHOLDER.idle))))
       .child(this.controls(t, status));
     return anchored("composer-menu", card, items.length > 0, this.menu(t, items));
   }
@@ -568,14 +652,19 @@ export class Composer {
 
   menu(t, items) {
     const at = Math.min(this.menuAt, Math.max(0, items.length - 1));
-    return v_flex().id("menu").w(420).max_h(320).overflow_y_scroll().track_scroll(this.menuScroll).p(4).gap(2).rounded(8).border(1).border_color(t.c.border)
-      .bg(t.c.popover ?? t.c.surface).shadow_md()
+    const what = this.pop === "slash" ? "command" : "file";
+    const count = `${items.length === 200 && what === "file" ? "200+" : items.length} ${what}${items.length === 1 ? "" : "s"}`;
+    const list = v_flex().id("menu").max_h(320).overflow_y_scroll().track_scroll(this.menuScroll).p(4).gap(2)
       .children(items.map((it, i) =>
         h_flex().id(`menu-${i}`).flex_none().h(30).px(8).gap(10).items_center().rounded(6).cursor_pointer()
           .when(i === at, (el) => el.bg(t.c.selected)).hover((s) => s.bg(t.c.hover))
           .on_click((_e, cx) => this.pick(it, cx))
           .child(div().flex_none().max_w(220).truncate().text_size(t.size.ui).font_weight(500).text_color(t.c.foreground).child(it.label))
           .child(div().flex_1().min_w(0).truncate().text_size(t.size.small).text_color(t.c.muted).child(it.desc))));
+    return v_flex().w(420).rounded(8).border(1).border_color(t.c.border).bg(t.c.popover ?? t.c.surface).shadow_md().overflow_hidden()
+      .child(list)
+      .child(h_flex().h(26).px(12).gap(8).items_center().border_t(1).border_color(t.c.border).text_size(t.size.tiny).text_color(t.c.dim)
+        .child(div().flex_1().child(count)).child("↑↓ choose · Enter pick · Tab complete · Esc close"));
   }
 
   controls(t, status) {
@@ -619,18 +708,22 @@ export class Composer {
   card(t, ctx) {
     const p = this.prompt;
     const yellow = t.c.ansi3 ?? t.c.blocked;
-    const button = (id, key, label, primary, onClick) =>
+    const button = (id, key, label, primary, onClick, danger) =>
       h_flex().id(id).h(28).px(12).gap(8).items_center().rounded(t.radius.chip).cursor_pointer()
-        .bg(primary ? t.c.solid ?? t.c.accent : t.c.raised).hover((s) => s.opacity(0.9)).tooltip(key === "esc" ? "Esc" : `Press ${key}`)
+        .bg(primary ? t.c.solid ?? t.c.accent : danger ? c.mix(t.c.surface, t.c.ansi1 ?? t.c.blocked, 0.16) : t.c.raised)
+        .hover((s) => s.opacity(0.9)).tooltip(key === "esc" ? "Esc" : `Press ${key}`)
         .on_click((_e, cx) => onClick(cx))
         .when(Boolean(key), (el) => el.child(div().text_size(t.size.small).font_weight(500)
           .text_color(primary ? t.c.solid_foreground ?? "#fff" : t.c.dim).child(key === "esc" ? "Esc" : key)))
-        .child(div().text_size(t.size.ui).font_weight(500).text_color(primary ? t.c.solid_foreground ?? "#fff" : t.c.foreground).child(label));
+        .child(div().text_size(t.size.ui).font_weight(500)
+          .text_color(primary ? t.c.solid_foreground ?? "#fff" : danger ? t.c.ansi1 ?? t.c.blocked : t.c.foreground).child(label));
     const terminal = h_flex().id("card-terminal").h(28).px(10).gap(6).items_center().rounded(t.radius.chip).cursor_pointer()
       .hover((s) => s.bg(t.c.hover)).tooltip("Open terminal · Alt+T")
       .on_click((_e, cx) => { this.chat.toggleTerminal(cx); cx.notify(); })
       .child(icon("terminal", 13, t.c.muted)).child(div().text_size(t.size.small).font_weight(500).text_color(t.c.muted).child("Open terminal"));
     const title = p.unknown ? "Claude is waiting in the terminal" : p.kind === "plan" ? "Plan ready" : p.title || "Claude needs you";
+    const red = t.c.ansi1 ?? t.c.blocked;
+    const isNo = (o) => p.kind === "approval" && /^no\b/i.test(o.label);
     const options = p.unknown ? [] : p.options;
     const longOptions = p.kind === "question" || options.some((o) => o.label.length > 28);
     const body = p.body ? p.body.split("\n").slice(0, 10).join("\n") : "";
@@ -644,7 +737,9 @@ export class Composer {
         if (o) { this.answer(o.key, cx); cx.stop_propagation(); } else if (k === "escape" && !p.unknown) { this.answer("esc", cx); cx.stop_propagation(); }
       })
       .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().text_size(t.size.ui).font_weight(500).text_color(yellow).child(title))
+        .child(icon("shield-alert", 14, yellow))
+        .child(div().flex_1().min_w(0).truncate().text_size(t.size.ui).font_weight(600).text_color(t.c.foreground).child(title))
+        .when(!p.unknown && p.esc, (el) => el.child(div().text_size(t.size.small).text_color(t.c.dim).child("Esc deny")))
         .child(terminal))
       // A plan is prose; a command or a file is mono.
       .when(Boolean(planItem), (el) => el.child(div().id("plan-body").max_h(320).overflow_y_scroll().px(12).py(8).rounded(t.radius.chip).bg(t.c.raised)
@@ -657,13 +752,16 @@ export class Composer {
         h_flex().id(`opt-${o.key}`).gap(10).px(10).py(6).rounded(t.radius.chip).cursor_pointer().when(i === 0, (el) => el.bg(t.c.raised))
           .hover((s) => s.bg(t.c.hover)).tooltip(`Press ${o.key}`)
           .on_click((_e, cx) => this.answer(o.key, cx))
-          .child(div().w(12).flex_none().text_size(t.size.small).font_weight(500).text_color(t.c.dim).child(o.key))
+          .child(div().size(18).flex_none().rounded(4).bg(t.c.raised).border(1).border_color(t.c.border).flex().items_center().justify_center()
+            .text_size(t.size.tiny).font_weight(600).text_color(isNo(o) ? red : t.c.muted).child(o.key))
           .child(v_flex().flex_1().gap(2)
-            .child(div().text_size(t.size.ui).font_weight(500).text_color(t.c.foreground).child(o.label))
+            .child(div().text_size(t.size.ui).font_weight(500).text_color(isNo(o) ? red : t.c.foreground).child(o.label))
             .when(Boolean(o.detail) && o.detail !== o.label, (el) => el.child(div().text_size(t.size.small).text_color(t.c.muted).child(o.detail))))))))
       .when(!longOptions && options.length > 0, (el) => el.child(h_flex().gap(8).flex_wrap()
-        .children(options.map((o, i) => button(`ans-${o.key}`, o.key, o.label, i === 0, (cx) => this.answer(o.key, cx))))))
-      .when(!p.unknown && p.esc, (el) => el.child(h_flex().child(button("ans-esc", "esc", "Cancel", false, (cx) => this.answer("esc", cx)))));
+        .children(options.map((o, i) => button(`ans-${o.key}`, o.key, o.label, i === 0, (cx) => this.answer(o.key, cx), isNo(o))))))
+      .when(!p.unknown && p.esc && !this.denyOption(), (el) => el.child(h_flex().child(button("ans-esc", "esc", "Cancel", false, (cx) => this.answer("esc", cx)))))
+      .when(options.length > 1, (el) => el.child(div().text_size(t.size.tiny).text_color(t.c.dim)
+        .child(`1–${options.length} choose${p.esc ? " · Esc deny" : ""}${this.denyOption() ? " · a reason typed below denies with it" : ""}`)));
   }
 }
 
