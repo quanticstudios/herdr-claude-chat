@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Claude Code SessionStart hook: puts a chat pane over the Herdr terminal this Claude runs in.
+[ -n "$HC_TERMINAL_ID" ] || exit 0
+command -v herdr-app >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+input=$(cat)
+# why: Claude waits for SessionStart hooks; the split goes on in the background so startup never stalls.
+python3 - "$HC_TERMINAL_ID" "$input" >/dev/null 2>&1 <<'PY' &
+import json, subprocess, sys
+
+def out(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+
+term = sys.argv[1]
+try:
+    hook = json.loads(sys.argv[2] or "{}")
+except ValueError:
+    hook = {}
+me = json.loads(out("hc", "get", term, "--json") or "{}")
+labels = me.get("labels") or {}
+if labels.get("claude-chat") or "herdr.tab" not in labels:
+    sys.exit(0)
+pane = None
+for space in json.loads(out("herdr-app", "ls") or "{}").get("spaces", []):
+    for tab in space.get("tabs", []):
+        for t in tab.get("terminals", []):
+            if t.get("terminal") == term:
+                pane = t.get("pane")
+if not pane:
+    sys.exit(0)
+out("hc", "label", term, "claude-chat=1")
+props = {"terminal": term, "cwd": hook.get("cwd") or me.get("cwd") or "", "attach": True}
+out("herdr-app", "do", "pane.split", json.dumps({"direction": "down", "pane": pane, "mod": "claude-chat", "props": props}))
+PY
+exit 0
