@@ -21,7 +21,7 @@ All colors come from the Herdr theme, so light and dark both work.
 
 ## How it behaves
 
-- **Starting.** When Claude Code starts in a Herdr terminal, a SessionStart hook splits that pane, puts the chat above, zooms it and focuses the composer. Claude's terminal stays at full height behind it, because the streaming reads Claude's screen.
+- **Starting.** When Claude Code starts in a Herdr terminal, a SessionStart hook splits that pane and adds the chat. The chat shrinks itself to 1px so the terminal gets the whole slot, then marks the terminal hidden in Herdr's layout document and fills the slot. A hidden terminal keeps its size, so Claude's screen stays full for the streaming to read, and nothing is zoomed: splits made from the chat open beside it as usual.
 - **Working.** The status pill and working row show, and the reply streams in smoothly at about 30 frames a second instead of in screen-sized chunks. Tool rows appear as Claude calls them, with a spinner until each finishes.
 - **Blocked.** The approval card takes the keyboard. Picking an option presses that key in Claude's terminal. For a permission prompt the composer stays below it ("Or type why not, and Enter denies with it"): Enter picks No, waits for the prompt to leave the screen, then sends the text as the next message. For other prompts a typed message stays a draft.
 - **Done and idle.** The working row goes away, the turn's time and tokens appear, and the composer is ready.
@@ -30,12 +30,14 @@ All colors come from the Herdr theme, so light and dark both work.
 - **`@` menu.** Files in the folder (git's file list, else a 4-level `find`).
 - **Images.** Paste from the clipboard or drop files on the composer; they show as thumbnails you can remove.
 - **Pickers.** Mode, model and effort chips send the matching Claude command (`/model`, `/effort`, Shift+Tab for the mode).
-- **Alt+T** toggles between the chat and Claude's terminal. A plain shell split next to the chat still gets its own Alt+T.
+- **Alt+T** toggles between the chat and Claude's terminal: the terminal view shows the terminal under a 32px strip of the chat ("Back to chat"), the chat view hides the terminal again. A plain shell split next to the chat still gets its own Alt+T.
+- **Claude exits** (or "Close chat, keep terminal"): the chat is removed and the terminal shown again in one layout write.
 - **Scrolling.** The transcript follows the bottom while you are there; scrolling up stops it and shows a jump-to-bottom button. Older turns load as you scroll up.
 
 ## Built from
 
 - `mods/claude-chat/`, a gpui-kit mod (`mod.json`: `place: "none"`, focusable). `main.js` is the view. `chat.js` finds and drives the terminal, `composer.js` the composer, `header.js` the header. `model.js` turns transcript lines into chat items (`items.d.ts`). `source.js` reads the transcript and the live screen. `md.js`, `mdparse.js` and `mdcode.js` render Markdown. `tools.js` and `toolview.js` draw tool rows. `system.js` and `sys.js` draw notices, thinking and plans. `theme.js` holds the type and spacing tokens.
+- Herdr's layout document over `hc connect` (`doc.get` / `doc.set` with the version read, retried on conflict) through `bin/layoutdoc.py`: `show`, `bar`, `drop`, `unhide`, and `release` for uninstalling.
 - Herdr commands: `pane.split`, `pane.swap`, `pane.zoom`, `pane.focus`, `pane.close`, `layout.resize`, `layout.select`, `layout.show`, `layout.hide`, `app.copy`.
 - `hc` calls: `get` (status, title, turn count), `read` (Claude's screen), `send` (your message), `keys` (approvals, Esc, Shift+Tab, Alt+T), `label` (marks a terminal that has a chat).
 - Programs: `python3` runs `bin/transcript.py` (reads the session's JSONL transcript), `bin/commands.py` (builds the slash menu), and the two hooks. `sh`, `git`, `find`, `cat` and `od` handle files, image copies and the clipboard.
@@ -51,6 +53,9 @@ All colors come from the Herdr theme, so light and dark both work.
 - **Claude Code updates can break parts of it.** Streaming text and the working row parse Claude's fullscreen TUI screen. The built-in command list is scraped from the Claude binary; if that finds nothing, the menu falls back to a short fixed list. Built against Claude Code 2.1.329.
 - **Commands with their own dialogs** (`/rc`, `/config`, `/resume` without arguments) open inside Claude's TUI; switch to it with Alt+T.
 - Herdr's zoom scales the px a mod writes, but `on_size_change` reports zoomed px; divide measured sizes by `settings().zoom` before feeding them back into layout, or the transcript scrolls past its own content at any zoom but 1.
+- A hidden mod pane gets no key commands, so the terminal view must keep the chat visible as a strip, never hidden, or Alt+T can't bring it back.
+- Do the layout write that removes the chat and unhides the terminal in one `doc.set`; a `pane.close` right after a separate unhide raced the app's copy of the layout and brought the chat back.
+- Uninstalling must run `python3 mods/claude-chat/bin/layoutdoc.py release` while Herdr runs, or chat terminals stay hidden with nothing to show them.
 - Herdr never reloads a mod through a link made while it runs. When developing, swap the link atomically (`ln -sfn new tmp && mv -fT tmp mods/claude-chat`) to reload open chats.
 - Needs `python3`, and Herdr's `hc` on the PATH of the processes Claude starts.
 
@@ -66,5 +71,7 @@ All colors come from the Herdr theme, so light and dark both work.
 - A session recap in the transcript shows as a "※ Recap" row.
 - At Herdr zoom 1.5 the whole conversation still scrolls from first message to last.
 - Typing `/rc` lists `/remote-control (rc)` first; `/` shows your plugin skills as `plugin:name`.
-- Alt+T shows Claude's terminal and Alt+T again returns to the chat.
+- Alt+T shows Claude's terminal under the chat strip and Alt+T again returns to the chat, also after a split.
+- Splitting the chat pane opens a usable pane beside it while the chat stays in chat mode, and `hc get` still reports the hidden terminal at its full rows and cols.
+- `/exit` in Claude removes the chat and leaves the shell filling the pane.
 - Uninstalling the hooks with `install-hook.py --uninstall` leaves Claude Code starting as a plain terminal.

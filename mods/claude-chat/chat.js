@@ -1,11 +1,17 @@
 // One chat's link to its Claude terminal: send, interrupt, keys, status, approvals and the Alt+T terminal view.
-import { exec, hc, run, agents, terminals, panes, focused, layout, window, shared, setShared, nextCommand, checking } from "herdr";
+import { exec, hc, run, agents, terminals, panes, focused, layout, window, shared, setShared, nextCommand, checking, appHome } from "herdr";
 import { parseApproval } from "./approval.js";
 
 /** Height of the terminal view's strip, inside whatever pane header the layout draws above it. */
-export const STRIP = 32;
+const STRIP = 32;
 /** The label the attach hook sets on a terminal that has a chat pane. */
 export const LABEL = "claude-chat";
+
+/** Shows one pane and hides another in Herdr's layout document (`bin/layoutdoc.py`); resolves true when it took. */
+async function layoutDoc(args) {
+  const r = await exec("python3", ["-I", `${appHome()}/mods/claude-chat/bin/layoutdoc.py`, ...args], { timeout: 8000 }).catch(() => null);
+  return r?.code === 0;
+}
 
 export class Chat {
   constructor(terminal) {
@@ -59,8 +65,9 @@ export class Chat {
     const a = this.agent;
     return a && !/^\d+$/.test(a.tab_name) ? a.tab_name : "Claude";
   }
-  /** The terminal view shows when this chat's pane is not the zoomed one. */
-  get terminalView() { const p = this.pane; return !!p && !p.zoomed; }
+  get viewKey() { return `claude-chat.view.${this.terminal}`; }
+  /** The terminal view shows the terminal under the chat's strip; the chat view hides the terminal. */
+  get terminalView() { return shared(this.viewKey) === "terminal"; }
 
   /** Types text into Claude's prompt and presses Enter; resolves with an error message or null. */
   async send(text) {
@@ -80,23 +87,23 @@ export class Chat {
     await this.keys(...option.keys);
   }
 
-  /** Flips between the chat and the live TUI; the Claude process is never touched. */
+  /** Flips between the chat and the live TUI by hiding or showing the terminal; the Claude process is never touched. */
   toggle(cx) {
     const p = this.pane, tp = this.termPane;
     if (!p || !tp) return;
-    this.want = { chat: !p.zoomed, from: Date.now() + 400, until: Date.now() + 2000 };
-    if (p.zoomed) {
-      run("pane.zoom", { pane: p.pane });
-      this.barPx = STRIP + paneHeader();
-      run("layout.resize", { id: p.pane, px: this.barPx });
-      run("pane.focus", { pane: tp.pane });
-    } else {
-      run("pane.zoom", { pane: p.pane });
-      run("pane.focus", { pane: p.pane });
+    const toChat = this.terminalView;
+    setShared(this.viewKey, toChat ? "chat" : "terminal");
+    const go = async (cx) => {
+      // why: a hidden mod pane gets no key commands, so the terminal view keeps the chat as a strip that still hears Alt+T.
+      if (!(await layoutDoc(toChat ? ["show", p.pane, tp.pane] : ["bar", p.pane, tp.pane, String(STRIP + paneHeader())]))) {
+        setShared(this.viewKey, toChat ? "terminal" : "chat");
+        return;
+      }
+      run("pane.focus", { pane: toChat ? p.pane : tp.pane });
       // why: pane.focus lands after this returns and would take the keyboard from the composer again.
-      if (cx) cx.timer.after(120, () => this.handlers.focus?.());
-      else this.handlers.focus?.();
-    }
+      if (toChat) cx.timer.after(120, () => this.handlers.focus?.());
+    };
+    if (cx) cx.spawn(go);
   }
 
   /** The scaffold's name for `toggle`. */
@@ -110,42 +117,32 @@ export class Chat {
     this.toggle(cx);
   }
 
-  /** Moves the chat above its terminal and zooms it, once per terminal; false until its pane shows up in `panes()`. */
+  /** Hides the terminal behind the chat, once per terminal; false until both panes show up in `panes()`. */
   attach(cx) {
     const key = `claude-chat.attached.${this.terminal}`;
-    if (shared(key)) return true;
+    if (shared(key) && shared(this.viewKey)) return true;
     const p = this.pane, tp = this.termPane;
     if (!p || !tp) return false;
     setShared(key, true);
-    run("pane.swap", { pane: p.pane, target: tp.pane });
-    // why: the zoom hides the terminal but keeps its split size, and Claude's screen is all the streaming reads; a resize sent with the swap is lost.
-    cx.timer.after(150, () => {
-      this.barPx = STRIP + paneHeader();
-      run("layout.resize", { id: p.pane, px: this.barPx });
-      run("pane.zoom", { pane: p.pane });
+    setShared(this.viewKey, "chat");
+    // why: a chat attached by the old zoom keeps its zoom and its bar height; both go before the terminal hides.
+    if (p.zoomed) run("pane.zoom", { pane: p.pane });
+    // why: a hidden terminal keeps the size it had when hidden, and Claude's screen is all the streaming reads, so it takes the whole slot first.
+    run("layout.resize", { id: p.pane, px: 1 });
+    cx.timer.after(250, (cx) => cx.spawn(async (cx) => {
+      await layoutDoc(["show", p.pane, tp.pane]);
       run("pane.focus", { pane: p.pane });
       this.handlers.focus?.();
-    });
+      cx.notify();
+    }));
     return true;
   }
 
   tick(cx) {
-    // why: a pane.zoom was seen to drop twice in the live test, leaving the view half flipped; one retry heals it.
-    const w = this.want, wp = this.pane;
-    if (w && wp && Date.now() > w.from && Date.now() < w.until && wp.zoomed !== w.chat) {
-      this.want = null;
-      run("pane.zoom", { pane: wp.pane });
-      if (w.chat) run("pane.focus", { pane: wp.pane });
-    } else if (w && Date.now() >= w.until) this.want = null;
-    // why: a layout switch in the terminal view keeps the old height, which clips or pads the bar under another pane header.
-    if (wp && !wp.zoomed && this.barPx !== STRIP + paneHeader()) {
-      this.barPx = STRIP + paneHeader();
-      run("layout.resize", { id: wp.pane, px: this.barPx });
-    }
-    // why: agent.focus (the agents list) zooms the terminal itself, which hides the chat and with it the only taker of Alt+T.
-    const tp = this.termPane;
-    if (tp?.zoomed && wp && focused()?.tab === tp.tab) {
-      run("pane.zoom", { pane: wp.pane });
+    const wp = this.pane, tp = this.termPane;
+    // why: agent.focus (the agents list) zooms the terminal itself, which would cover the chat and with it the only taker of Alt+T.
+    if (tp?.zoomed && wp && !this.terminalView && focused()?.tab === tp.tab) {
+      run("pane.zoom", { pane: tp.pane });
       run("pane.focus", { pane: wp.pane });
       this.handlers.focus?.();
     }
@@ -166,17 +163,23 @@ export class Chat {
     // why: Claude quit in its shell (or the terminal closed): the chat steps aside so the shell is usable again.
     if (this.hadAgent && !this.agent) {
       this.goneSince ||= Date.now();
-      if (Date.now() - this.goneSince > 3000) this.detach();
+      if (Date.now() - this.goneSince > 3000) this.detach(cx);
     }
   }
 
-  detach() {
-    const p = this.pane;
+  /** Closes the chat pane and gives the terminal its slot back. */
+  detach(cx) {
+    const p = this.pane, tp = this.termPane;
     this.hadAgent = false;
     setShared(`claude-chat.attached.${this.terminal}`, null);
+    setShared(this.viewKey, null);
     if (this.alive) hc(["label", this.terminal, `${LABEL}=`]);
-    if (p) run("pane.close", { pane: p.pane });
+    if (!p) return;
+    if (!tp) { run("pane.close", { pane: p.pane }); return; }
+    // why: a pane.close right after a separate unhide raced the app's copy of the layout and brought the chat back, so both go in one write.
+    cx.spawn(async () => { if (await layoutDoc(["drop", p.pane, tp.pane])) run("pane.focus", { pane: tp.pane }); });
   }
+
 }
 
 /** Height of the header the shown layout draws on every pane (Herdr's main: 30; 0 when it draws none). */

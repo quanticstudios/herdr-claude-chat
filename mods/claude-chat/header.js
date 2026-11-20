@@ -70,7 +70,7 @@ export function header(chat, ctx, ui = {}) {
     .when(Boolean(chat.cwd), (el) => el.child(menuItem(t, "m-copy", "Copy folder path", null, (cx) => {
       close(cx); ctx.copy(chat.cwd); notify({ title: "Copied", body: chat.cwd, level: "success", timeout: 2000 });
     })))
-    .when(Boolean(chat.pane), (el) => el.child(menuItem(t, "m-close", "Close chat, keep terminal", null, (cx) => { close(cx); chat.detach(); })));
+    .when(Boolean(chat.pane), (el) => el.child(menuItem(t, "m-close", "Close chat, keep terminal", null, (cx) => { close(cx); chat.detach(cx); })));
   const trigger = ghost(t, "h-more", { icon: "ellipsis", tip: "More", on: ui.more, act: (cx) => {
     // why: the press that opened the trigger also lands as a press outside the open menu; that one already closed it.
     if (Date.now() - (ui.closedAt ?? 0) > 250) ui.more = !ui.more;

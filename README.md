@@ -16,7 +16,7 @@ python3 ~/.config/herdr-app/mods/claude-chat/bin/install-hook.py
 
 Then add `"alt-t": "claude-chat.toggle"` to the `global` section of `~/.config/herdr-app/keys.json` and start a new Claude session in a Herdr terminal.
 
-The hook installer adds two SessionStart hooks to `~/.claude/settings.json`. Remove them with `install-hook.py --uninstall`.
+The hook installer adds two SessionStart hooks to `~/.claude/settings.json`. To uninstall, with Herdr running, first run `python3 ~/.config/herdr-app/mods/claude-chat/bin/layoutdoc.py release` (it shows the Claude terminals the chats hid), then `install-hook.py --uninstall`, then delete the mod folder.
 
 It reads `~/.claude` and the Claude Code binary, runs `python3`, `hc`, `git` and a few shell tools, and makes no network requests. Streaming and the slash menu read Claude Code's screen and binary, so a Claude Code update can break them. Built against Claude Code 2.1.329.
 
