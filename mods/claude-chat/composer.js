@@ -38,7 +38,7 @@ const commandsHelper = () => `${appHome()}/mods/claude-chat/bin/commands.py`;
 
 let bound = false;
 
-const PLACEHOLDER = { idle: "Reply to Claude", working: "Enter steers Claude now · Alt+Enter sends after this turn", blocked: "Answer above, or type to queue" };
+const PLACEHOLDER = { idle: "Reply to Claude", working: "Enter: Claude sees it at its next step · Alt+Enter: send when it finishes", blocked: "Answer above, or type to queue" };
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 /** The blocked screen's prompt: the composer's reader first, then chat.js's, which also knows unnumbered prompts. */
