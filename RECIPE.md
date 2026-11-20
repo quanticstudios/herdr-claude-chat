@@ -9,7 +9,7 @@ Every Claude Code session you start in a Herdr terminal opens as a native chat p
 The chat fills the pane Claude's terminal was in. Top to bottom:
 
 - **Header**, 44px, bottom border. The Claude mark (16px), the session title (Claude's terminal title, else the tab name, 14px semibold), the git branch with a branch icon (12px, muted), and a status pill while Claude works or waits. On the right: a **Terminal** button, a **Changes** button when the layout has a Changes panel, and a `…` menu (Terminal view, Show files, Copy folder path, Close chat and keep terminal).
-- **Transcript**, centered in a 760px column, Geist 14px with 1.55 line height, code in JetBrains Mono 12.5px. Your messages are right-aligned bubbles with image thumbnails and folded pasted text. Claude's replies are plain Markdown: lists, tables, code blocks with a copy button, links. Each tool call is one 28px row with an icon, the tool name, its main argument as a chip (file path, command, URL, pattern) and a result summary on the right ("2 files", "3 lines", "+1 −1", "1.2s", red error text). Rows expand to show the diff, output or image. "Thought for 4s ›" rows expand to the thinking text; thinking with no text is hidden. Notices sit between messages: "Conversation compacted", "Switched to Sonnet 5.5", API errors and usage limits as cards. Each finished turn ends with its time and token count in muted 12px.
+- **Transcript**, centered in a 760px column, Geist 14px with 1.55 line height, code in JetBrains Mono 12.5px. Your messages are right-aligned bubbles with image thumbnails and folded pasted text. Claude's replies are plain Markdown: lists, tables, code blocks with a copy button, links. Each tool call is one 28px row with an icon, the tool name, its main argument as a chip (file path, command, URL, pattern) and a result summary on the right ("2 files", "3 lines", "+1 −1", "1.2s", red error text). Rows expand to show the diff, output or image. Short thinking (up to 400 characters, one paragraph) shows as a muted line, as Claude Code's own "· summary" lines do; longer thinking is a "Thought for 4s ›" row that expands; thinking with no text is hidden. Notices sit between messages: "Conversation compacted", "Switched to Sonnet 5.5", "※ Recap" rows with Claude Code's session recaps (muted italic), API errors and usage limits as cards. Each finished turn ends with its time and token count in muted 12px.
 - **Working row**, above the composer while Claude works: a spinner, Claude's own verb ("Whirlpooling…", "Writing…") and the elapsed time and tokens in muted text. A live plan card ("Checking the page, 2 of 3") shows above it when Claude keeps a todo list.
 - **Queued messages**, one chip each, when you send while Claude works. The first chip has **Send now**, which interrupts Claude so the queued message starts at once; the chip then reads "Sending…" in the accent color.
 - **Composer**, a rounded box in the same 760px column. A textarea ("Reply to Claude"), then a row of chips: permission mode (Default, Accept edits, Plan, Auto, Bypass permissions, as your settings allow), model and effort, a context meter once Claude reports how full its context is, and a send button that turns into a stop button while Claude works.
@@ -40,7 +40,7 @@ All colors come from the Herdr theme, so light and dark both work.
 - Claude Code hooks, both SessionStart: `bin/session-hook.py` records which transcript each Herdr terminal writes, under `~/.local/state/herdr-claude-chat/bindings/`. `hooks/SessionStart-attach` splits the pane and opens the chat. `bin/install-hook.py` adds both to Claude's `settings.json`; `--uninstall` removes them.
 - Key: `keys.json` binds `alt-t` globally to `claude-chat.toggle`.
 - Art: Geist (`fonts/`, SIL OFL) and Lucide icons (`icons/`, `tool-icons/`, ISC).
-- Props: `terminal` (the Herdr terminal id), `cwd`, `attach` (move above the terminal and zoom), and `fixture` (a path to an items JSON file; renders a static transcript with no terminal, for previews).
+- Props: `terminal` (the Herdr terminal id), `cwd`, `attach` (move above the terminal and zoom), and for previews `fixture` (a path to an items JSON file, rendered as a static transcript with no terminal; an item with `open: true` starts expanded) and `footer` (`{model, effort, mode, context}` for the composer chips).
 
 ## Watch out
 
@@ -48,6 +48,7 @@ All colors come from the Herdr theme, so light and dark both work.
 - **It reads outside its folder and runs programs.** It reads `~/.claude` (settings, transcripts, commands, skills, plugins), reads the Claude Code binary to list built-in commands, writes `~/.claude/settings.json` when you install the hooks, and runs the programs listed above. It makes no network requests.
 - **Claude Code updates can break parts of it.** Streaming text and the working row parse Claude's fullscreen TUI screen. The built-in command list is scraped from the Claude binary; if that finds nothing, the menu falls back to a short fixed list. Built against Claude Code 2.1.329.
 - **Commands with their own dialogs** (`/rc`, `/config`, `/resume` without arguments) open inside Claude's TUI; switch to it with Alt+T.
+- Herdr's zoom scales the px a mod writes, but `on_size_change` reports zoomed px; divide measured sizes by `settings().zoom` before feeding them back into layout, or the transcript scrolls past its own content at any zoom but 1.
 - Herdr never reloads a mod through a link made while it runs. When developing, swap the link atomically (`ln -sfn new tmp && mv -fT tmp mods/claude-chat`) to reload open chats.
 - Needs `python3`, and Herdr's `hc` on the PATH of the processes Claude starts.
 
@@ -58,6 +59,8 @@ All colors come from the Herdr theme, so light and dark both work.
 - A tool call shows as a row with its argument and result; clicking it expands the output.
 - A permission prompt shows the approval card; picking an option continues the turn in Claude's terminal.
 - Sending while Claude works shows a queued chip; Send now interrupts and the message starts.
+- A session recap in the transcript shows as a "※ Recap" row.
+- At Herdr zoom 1.5 the whole conversation still scrolls from first message to last.
 - Typing `/rc` lists `/remote-control (rc)` first; `/` shows your plugin skills as `plugin:name`.
 - Alt+T shows Claude's terminal and Alt+T again returns to the chat.
 - Uninstalling the hooks with `install-hook.py --uninstall` leaves Claude Code starting as a plain terminal.

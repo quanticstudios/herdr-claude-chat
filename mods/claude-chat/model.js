@@ -481,6 +481,9 @@ class Reducer {
       return this.push({ kind: "notice", id: l.uuid, at, tone: "info", what: "compact", text: "Conversation compacted" });
     }
     if (st === "local_command") return this.command(content, l, at);
+    if (st === "away_summary" && content.trim()) {
+      return this.push({ kind: "notice", id: l.uuid, at, tone: "muted", what: "recap", text: content.replace(/\s*\(turn off recaps in \/config\)\s*$/i, "").trim() });
+    }
     if (st === "api_error") {
       const e = l.error?.message ?? l.error?.error?.message ?? (typeof l.error === "string" ? l.error : "");
       const retry = l.retryAttempt ? ` (retry ${l.retryAttempt}${l.maxRetries ? ` of ${l.maxRetries}` : ""})` : "";

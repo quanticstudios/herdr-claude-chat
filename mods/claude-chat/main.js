@@ -2,7 +2,7 @@
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { props, exec, run, terminals, checking, appHome } from "herdr";
-import { tokens } from "./theme.js";
+import { tokens, unzoom } from "./theme.js";
 import * as model from "./model.js";
 import * as source from "./source.js";
 import * as system from "./system.js";
@@ -159,6 +159,9 @@ export default class ClaudeChat extends View {
     // why: fixtures name their images relative to themselves so they work from any checkout.
     const dir = this.p.fixture.replace(/[^/]*$/, "");
     for (const it of all) for (const img of it.images ?? []) if (img.path && !img.path.startsWith("/")) img.path = dir + img.path;
+    // why: previews show some rows open (`open: true` on an item) and a filled footer (props.footer).
+    for (const it of all) if (it.open) this.opened.add(it.id);
+    if (this.p.footer) Object.assign(this.chat.composer.footer, this.p.footer);
     this.phase = "ready";
     if (this.p.page) {
       // why: props.page (items per page) pages the fixture like a transcript, slowly, to check anchoring on prepend.
@@ -396,7 +399,7 @@ export default class ClaudeChat extends View {
       body = div().text_size(t.size.small).text_color(t.c.muted).child(`Couldn't draw this ${it.kind}.`);
     }
     return div().id(`r:${it.id}`).w_full().flex_none().pb(gapBetween(it, this.items[i + 1]))
-      .on_size_change((s, cx) => { if (this.vp.measure(it.id, s.height)) this.remeasured(cx); })
+      .on_size_change((s, cx) => { if (this.vp.measure(it.id, unzoom(s.height))) this.remeasured(cx); })
       .child(div().w_full().max_w(t.measure).mx_auto().px(24).child(body));
   }
 
@@ -431,7 +434,7 @@ export default class ClaudeChat extends View {
     const t = ctx.t, vp = this.vp;
     const w = this.drawn = vp.window(this.items, this.indexOf);
     const area = div().id("tx").relative().flex_1().min_h(0).overflow_hidden()
-      .on_size_change((s, cx) => { if (vp.vh !== s.height) { vp.vh = s.height; cx.notify(); } })
+      .on_size_change((s, cx) => { const h = unzoom(s.height); if (vp.vh !== h) { vp.vh = h; cx.notify(); } })
       .on_scroll_wheel((e, cx) => {
         const was = vp.pinned;
         vp.scroll(this.items, this.indexOf, e.delta.y);

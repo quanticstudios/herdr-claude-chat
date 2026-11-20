@@ -1,5 +1,5 @@
 // Chat design tokens: herdr theme colors plus the type and spacing scale of docs/type-spacing-spec.md.
-import { theme } from "herdr";
+import { theme, settings } from "herdr";
 
 export function tokens() {
   const c = theme();
@@ -14,3 +14,6 @@ export function tokens() {
     measure: 760,
   };
 }
+
+// why: Herdr's zoom scales the px a mod writes, but on_size_change reports zoomed px; this turns a measured size back into written px.
+export const unzoom = (px) => px / (Number(settings().zoom) || 1);

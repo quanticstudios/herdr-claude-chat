@@ -3,6 +3,7 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { parse, readFileHref, tableWidths } from "./mdparse.js";
 import { tint } from "./mdcode.js";
+import { unzoom } from "./theme.js";
 
 const ICON = "mods/claude-chat/icons/";
 const cache = new Map();
@@ -48,7 +49,7 @@ export function markdown(text, ctx, key) {
   // why: x-scroll areas take the vertical wheel in GPUI, so tables and code scroll only when wider than this.
   const width = widths.get(s.key) ?? 680;
   return v_flex().id(s.key + ":md").w_full().min_w(0).font_family(t.font.ui).text_size(14).line_height("22px").text_color(s.prose)
-    .on_size_change((size, cx) => { if (Math.abs((widths.get(s.key) ?? 0) - size.width) > 1) { widths.set(s.key, size.width); cx.notify(); } })
+    .on_size_change((size, cx) => { const w = unzoom(size.width); if (Math.abs((widths.get(s.key) ?? 0) - w) > 1) { widths.set(s.key, w); cx.notify(); } })
     .children(renderBlocks(blocksFor(text), s, s.key, false, width));
 }
 

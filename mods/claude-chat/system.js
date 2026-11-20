@@ -97,11 +97,17 @@ export function liveTodo(todo, ctx) {
     .child(bar);
 }
 
+const SUMMARY_MAX = 400;
+
 function thinkingRow(item, ctx) {
   const t = ctx.t, c = colors(t);
   const label = item.seconds >= 1 ? `Thought for ${dur(item.seconds)}` : "Thought";
   const row = h_flex().h(t.row).gap(6).items_center().text_size(t.size.ui).text_color(c.muted);
   if (item.text == null || !item.text.trim()) return row.child(label);
+  // why: Claude Code prints short thinking as a visible progress line ("· summary"), so the chat shows it too.
+  if (item.text.trim().length <= SUMMARY_MAX && !/\n\s*\n/.test(item.text.trim())) {
+    return div().w_full().py(2).text_size(t.size.ui).line_height(1.55).text_color(c.muted).child(item.text.trim());
+  }
   const open = ctx.open(item.id);
   const body = mix(c.background, c.muted, 0.9);
   return v_flex().w_full()
@@ -197,6 +203,10 @@ function notice(item, ctx) {
       return v_flex().w_full().gap(6)
         .child(toggler(div(), item.id, ctx).w_full().child(quietRow("shield", c.yellow, item.text, ctx).child(chevron(open, c))))
         .when(open, (el) => el.child(quietBlock(detail, `${item.id}:hook`, ctx)));
+    case "recap":
+      return h_flex().w_full().gap(8).items_start().py(4).text_size(t.size.ui).line_height(1.5)
+        .child(div().flex_none().font_weight(600).text_color(c.muted).child("※ Recap"))
+        .child(div().flex_1().min_w(0).italic().text_color(c.muted).child(item.text));
     case "card": return noticeCard(item, detail, ctx);
   }
   return item.tone === "info" ? quietRow("info", c.accent, item.text, ctx) : quietRow(null, null, item.text, ctx);

@@ -92,9 +92,9 @@ export function elapsed(item, now = Date.now()) {
   return null;
 }
 
-/** How a notice draws: interrupt, compact, switch, task, hook, card (error or warn) or row. */
+/** How a notice draws: interrupt, compact, switch, task, hook, recap, card (error or warn) or row. */
 export function noticeKind(n) {
-  if (["interrupt", "compact", "switch", "task", "hook"].includes(n.what)) return n.what;
+  if (["interrupt", "compact", "switch", "task", "hook", "recap"].includes(n.what)) return n.what;
   const t = n.text ?? "";
   if (/^\[?request interrupted/i.test(t) || /^(interrupted|stopped)\b/i.test(t)) return "interrupt";
   if (/^conversation compacted/i.test(t)) return "compact";
