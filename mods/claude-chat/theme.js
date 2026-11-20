@@ -11,7 +11,7 @@ export function tokens() {
     space: (n) => n * 4,
     radius: { card: 12, block: 8, chip: 6 },
     row: 28,
-    measure: 760,
+    measure: 960,
   };
 }
 
